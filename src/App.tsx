@@ -33,6 +33,14 @@ import {
   setMouseTrapBoardMode,
   triggerInteractiveScene,
 } from './game/mouseTrapRules';
+import {
+  advanceViewMasterSlide,
+  createInitialViewMasterState,
+  insertViewMasterReel,
+  toggleViewMasterEyepiece,
+  ViewMasterGameState,
+  ViewMasterReelId,
+} from './game/viewMasterRules';
 import { soundFX } from './game/soundEffects';
 import {
   ActiveGameType,
@@ -45,11 +53,25 @@ import {
 import { GameHudAndMenus } from './components/GameHudAndMenus';
 
 export default function App() {
-  const isAutostart =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('autostart') === '1';
+  const urlParams =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search)
+      : null;
+  const isAutostart = urlParams?.get('autostart') === '1';
+  const paramGame = urlParams?.get('game') as ActiveGameType | null;
+  const initialGame: ActiveGameType =
+    paramGame === 'sorry' ||
+    paramGame === 'guess_who' ||
+    paramGame === 'mouse_trap' ||
+    paramGame === 'view_master'
+      ? paramGame
+      : 'sorry';
+  const paramChest = urlParams?.get('chest') === '1';
+  const paramCamera = urlParams?.get('camera') as CameraAngleId | null;
+  const paramStereo = urlParams?.get('stereo') === '1';
+  const paramReel = urlParams?.get('reel') as ViewMasterReelId | null;
 
-  const [activeGame, setActiveGame] = useState<ActiveGameType>('sorry');
+  const [activeGame, setActiveGame] = useState<ActiveGameType>(initialGame);
   const [appState, setAppState] = useState<'title' | 'playing' | 'paused' | 'gameover'>(
     isAutostart ? 'playing' : 'title'
   );
@@ -65,7 +87,18 @@ export default function App() {
   const [mouseTrapState, setMouseTrapState] = useState<MouseTrapGameState>(() =>
     createInitialMouseTrapState()
   );
-  const [cameraAngle, setCameraAngle] = useState<CameraAngleId>('tabletop');
+  const [viewMasterState, setViewMasterState] = useState<ViewMasterGameState>(() => {
+    const base = createInitialViewMasterState(
+      paramReel === 'animals' || paramReel === 'cars' || paramReel === 'scenery'
+        ? paramReel
+        : 'animals'
+    );
+    return paramStereo ? toggleViewMasterEyepiece(base, true) : base;
+  });
+  const [toyChestOpen, setToyChestOpen] = useState<boolean>(paramChest);
+  const [cameraAngle, setCameraAngle] = useState<CameraAngleId>(
+    paramCamera ?? (paramChest ? 'toy_chest' : 'tabletop')
+  );
   const [followAction, setFollowAction] = useState<boolean>(true);
   const [autoPlayAll, setAutoPlayAll] = useState<boolean>(false);
   const [muted, setMuted] = useState<boolean>(false);
@@ -80,6 +113,13 @@ export default function App() {
     null
   );
   const [scenePulseStartMs, setScenePulseStartMs] = useState<number | null>(null);
+  const [viewMasterLeverAnimMs, setViewMasterLeverAnimMs] = useState<number | null>(
+    null
+  );
+  const [viewMasterInsertAnimMs, setViewMasterInsertAnimMs] = useState<number | null>(
+    null
+  );
+  const [physicsBumpTrigger, setPhysicsBumpTrigger] = useState<number>(0);
   const [unfoldTriggerCount, setUnfoldTriggerCount] = useState<number>(0);
   const [walkToTableTrigger, setWalkToTableTrigger] = useState<number>(0);
 
@@ -89,7 +129,29 @@ export default function App() {
     document.body.dataset.game = activeGame;
     document.body.dataset.camera = cameraAngle;
     document.body.dataset.cinematic = followAction ? 'on' : 'off';
-  }, [appState, subPhase, activeGame, cameraAngle, followAction]);
+    document.body.dataset.toychest = toyChestOpen ? 'open' : 'closed';
+    (window as unknown as Record<string, unknown>).render_game_to_text = () =>
+      JSON.stringify({
+        appState,
+        subPhase,
+        activeGame,
+        cameraAngle,
+        toyChestOpen,
+        viewMaster: {
+          activeReel: viewMasterState.activeReelId,
+          slideIndex: viewMasterState.currentSlideIndex,
+          eyepieceMode: viewMasterState.lookingThroughEyepiece,
+        },
+      });
+  }, [
+    appState,
+    subPhase,
+    activeGame,
+    cameraAngle,
+    followAction,
+    toyChestOpen,
+    viewMasterState,
+  ]);
 
   // Main Entrance: Open the 3D Cardboard Game Box -> Unfold the Board -> Lay Out Pieces!
   const handleStartBoxEntrance = useCallback(() => {
@@ -109,6 +171,8 @@ export default function App() {
       setGameState(createInitialGameState());
     } else if (activeGame === 'guess_who') {
       setGuessWhoState(createInitialGuessWhoState());
+    } else if (activeGame === 'view_master') {
+      setViewMasterState(createInitialViewMasterState('animals'));
     } else {
       setMouseTrapState(createInitialMouseTrapState());
     }
@@ -149,18 +213,21 @@ export default function App() {
       setGameState(fresh);
     } else if (activeGame === 'guess_who') {
       setGuessWhoState(createInitialGuessWhoState());
+    } else if (activeGame === 'view_master') {
+      setViewMasterState(createInitialViewMasterState('animals'));
     } else {
       setMouseTrapState(createInitialMouseTrapState());
     }
   }, [activeGame]);
 
-  // Switch between SORRY! 3D, GUESS WHO? 3D, and MOUSE TRAP! 3D
+  // Switch between SORRY! 3D, GUESS WHO? 3D, MOUSE TRAP! 3D, and VIEW-MASTER 3D
   const handleChangeGame = useCallback(
     (explicitGame?: ActiveGameType) => {
       const nextOrder: Record<ActiveGameType, ActiveGameType> = {
         sorry: 'guess_who',
         guess_who: 'mouse_trap',
-        mouse_trap: 'sorry',
+        mouse_trap: 'view_master',
+        view_master: 'sorry',
       };
       const nextGame: ActiveGameType = explicitGame ?? nextOrder[activeGame];
       setActiveGame(nextGame);
@@ -173,6 +240,8 @@ export default function App() {
         setGameState(createInitialGameState());
       } else if (nextGame === 'guess_who') {
         setGuessWhoState(createInitialGuessWhoState());
+      } else if (nextGame === 'view_master') {
+        setViewMasterState(createInitialViewMasterState('animals'));
       } else {
         setMouseTrapState(createInitialMouseTrapState());
       }
@@ -186,6 +255,44 @@ export default function App() {
     },
     [activeGame, appState]
   );
+
+  // Step2 Lift & Hide Toy Chest Handlers
+  const handleToggleToyChest = useCallback(() => {
+    setToyChestOpen((prev) => {
+      const next = !prev;
+      soundFX.playToyChestSlide(next);
+      return next;
+    });
+  }, []);
+
+  const handleSelectGameFromToyChest = useCallback(
+    (gameId: ActiveGameType) => {
+      soundFX.playToyChestSlide(false);
+      setToyChestOpen(false);
+      handleChangeGame(gameId);
+    },
+    [handleChangeGame]
+  );
+
+  // View-Master 3D Handlers
+  const handleAdvanceViewMasterSlide = useCallback(() => {
+    soundFX.startNostalgiaMusic();
+    soundFX.playViewMasterLeverClick();
+    setViewMasterLeverAnimMs(performance.now());
+    setViewMasterState((prev) => advanceViewMasterSlide(prev));
+  }, []);
+
+  const handleSelectViewMasterReel = useCallback((reelId: ViewMasterReelId) => {
+    soundFX.startNostalgiaMusic();
+    soundFX.playViewMasterReelInsert();
+    setViewMasterInsertAnimMs(performance.now());
+    setViewMasterState((prev) => insertViewMasterReel(prev, reelId));
+  }, []);
+
+  const handleToggleViewMasterEyepiece = useCallback(() => {
+    soundFX.playViewMasterLeverClick();
+    setViewMasterState((prev) => toggleViewMasterEyepiece(prev));
+  }, []);
 
   const handleOpenBox = useCallback(() => {
     soundFX.startNostalgiaMusic();
@@ -315,7 +422,6 @@ export default function App() {
     const outcome = rollMouseTrapTurn(mouseTrapState);
 
     if (outcome.stepIndices.length === 0) {
-      // Mouse was trapped in the Red Cage (either escaped or stayed trapped)
       setMouseTrapState(outcome.nextState);
       return;
     }
@@ -529,7 +635,10 @@ export default function App() {
         appState === 'playing' &&
         subPhase === 'board_play'
       ) {
-        if (
+        if (activeGame === 'view_master') {
+          e.preventDefault();
+          handleAdvanceViewMasterSlide();
+        } else if (
           activeGame === 'sorry' &&
           !activeAnimation &&
           (gameState.currentTurn === 'red' || autoPlayAll)
@@ -576,6 +685,7 @@ export default function App() {
     handleSelectMove,
     handlePassTurn,
     handleRollMouseTrapDice,
+    handleAdvanceViewMasterSlide,
   ]);
 
   const handleChangeCameraAngle = useCallback(
@@ -598,6 +708,8 @@ export default function App() {
         gameState={gameState}
         guessWhoState={guessWhoState}
         mouseTrapState={mouseTrapState}
+        viewMasterState={viewMasterState}
+        toyChestOpen={toyChestOpen}
         cameraAngle={cameraAngle}
         followAction={followAction}
         nearTable={nearTable}
@@ -611,10 +723,18 @@ export default function App() {
         onRollMouseTrapDice={handleRollMouseTrapDice}
         onCollectFloatingCheese={handleCollectFloatingCheese}
         onTriggerMouseTrapScene={handleTriggerMouseTrapScene}
+        onToggleToyChest={handleToggleToyChest}
+        onSelectGameFromToyChest={handleSelectGameFromToyChest}
+        onAdvanceViewMasterSlide={handleAdvanceViewMasterSlide}
+        onSelectViewMasterReel={handleSelectViewMasterReel}
+        onToggleViewMasterEyepiece={handleToggleViewMasterEyepiece}
         activeAnimation={activeAnimation}
         activeMouseStepAnim={activeMouseStepAnim}
         chainReactionStartMs={chainReactionStartMs}
         scenePulseStartMs={scenePulseStartMs}
+        viewMasterLeverAnimMs={viewMasterLeverAnimMs}
+        viewMasterInsertAnimMs={viewMasterInsertAnimMs}
+        physicsBumpTrigger={physicsBumpTrigger}
         unfoldTriggerCount={unfoldTriggerCount}
         walkToTableTrigger={walkToTableTrigger}
       />
@@ -626,6 +746,8 @@ export default function App() {
         gameState={gameState}
         guessWhoState={guessWhoState}
         mouseTrapState={mouseTrapState}
+        viewMasterState={viewMasterState}
+        toyChestOpen={toyChestOpen}
         cameraAngle={cameraAngle}
         followAction={followAction}
         autoPlayAll={autoPlayAll}
@@ -656,6 +778,11 @@ export default function App() {
         onCollectFloatingCheese={handleCollectFloatingCheese}
         onToggleMouseTrapBoardMode={handleToggleMouseTrapBoardMode}
         onTriggerMouseTrapScene={handleTriggerMouseTrapScene}
+        onTriggerPhysicsBump={() => setPhysicsBumpTrigger((c) => c + 1)}
+        onToggleToyChest={handleToggleToyChest}
+        onAdvanceViewMasterSlide={handleAdvanceViewMasterSlide}
+        onSelectViewMasterReel={handleSelectViewMasterReel}
+        onToggleViewMasterEyepiece={handleToggleViewMasterEyepiece}
         onChangeCameraAngle={handleChangeCameraAngle}
         onToggleFollowAction={() => setFollowAction((prev) => !prev)}
         onToggleAutoPlayAll={() => setAutoPlayAll((prev) => !prev)}

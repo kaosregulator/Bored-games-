@@ -396,7 +396,128 @@ class SoundEffectsManager {
     clang.start(ct);
     clang.stop(ct + 0.48);
   }
+
+  /**
+   * Iconic old-school View-Master mechanical lever ratchet sound:
+   * Down-stroke metallic spring "CHUNK" followed by up-stroke reel-advance "CLACK!"
+   */
+  public playViewMasterLeverClick() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // 1. Downward spring lever press ("KA-CHUNK")
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = 'square';
+    osc1.frequency.setValueAtTime(420, now);
+    osc1.frequency.exponentialRampToValueAtTime(115, now + 0.048);
+    gain1.gain.setValueAtTime(0.2, now);
+    gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.06);
+
+    // Metallic ratchet tooth click mid-stroke
+    const oscMid = ctx.createOscillator();
+    const gainMid = ctx.createGain();
+    oscMid.type = 'triangle';
+    oscMid.frequency.setValueAtTime(1240, now + 0.055);
+    oscMid.frequency.exponentialRampToValueAtTime(380, now + 0.09);
+    gainMid.gain.setValueAtTime(0.14, now + 0.055);
+    gainMid.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
+    oscMid.connect(gainMid);
+    gainMid.connect(ctx.destination);
+    oscMid.start(now + 0.055);
+    oscMid.stop(now + 0.1);
+
+    // 2. Return spring release snap ("CLACK!")
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = 'sawtooth';
+    osc2.frequency.setValueAtTime(860, now + 0.13);
+    osc2.frequency.exponentialRampToValueAtTime(240, now + 0.185);
+    gain2.gain.setValueAtTime(0.18, now + 0.13);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.19);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.13);
+    osc2.stop(now + 0.2);
+  }
+
+  /**
+   * Crisp cardboard reel sliding into the top View-Master slot ("SHHK-SNICK").
+   */
+  public playViewMasterReelInsert() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(260, now);
+    osc.frequency.linearRampToValueAtTime(590, now + 0.14);
+    gain.gain.setValueAtTime(0.12, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.17);
+
+    // Final detent lock click
+    this.playStandFlipClack(0.16);
+  }
+
+  /**
+   * Hollow roto-molded plastic sliding sound for the Step2 Lift & Hide Toy Chest door.
+   */
+  public playToyChestSlide(opening: boolean = true) {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    const startFreq = opening ? 110 : 210;
+    const endFreq = opening ? 220 : 95;
+    osc.frequency.setValueAtTime(startFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(endFreq, now + 0.28);
+
+    gain.gain.setValueAtTime(0.001, now);
+    gain.gain.linearRampToValueAtTime(0.12, now + 0.05);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.32);
+  }
+
+  /**
+   * Subtle plastic/metal clack triggered by Cannon.js physical body collisions.
+   */
+  public playPhysicsCollisionClack(impactStrength: number = 0.5) {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const clamped = Math.min(1, Math.max(0.08, impactStrength));
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(540 + Math.random() * 220, now);
+    osc.frequency.exponentialRampToValueAtTime(160, now + 0.035);
+    gain.gain.setValueAtTime(0.08 * clamped, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.045);
+  }
 }
 
 export const soundFX = new SoundEffectsManager();
+
 

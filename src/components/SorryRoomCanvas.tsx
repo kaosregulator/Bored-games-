@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import {
   CardRank,
   LegalMove,
@@ -25,6 +25,16 @@ import {
 } from '../game/mouseTrapRules';
 import { buildMouseTrap3DScene } from '../game/mouseTrap3DBuilder';
 import {
+  ViewMasterGameState,
+  ViewMasterReelId,
+} from '../game/viewMasterRules';
+import {
+  buildStep2ToyChest3D,
+  buildViewMaster3DScene,
+  create1990sStudioHDREnvironment,
+  createViewMasterBoxLidTexture,
+} from '../game/step2ToyChestAndViewMaster3D';
+import {
   createCardBackTexture,
   createCardFrontTexture,
   createGuessWhoBoxLidTexture,
@@ -38,7 +48,7 @@ import {
 } from '../game/boardTextures';
 import { soundFX } from '../game/soundEffects';
 
-export type ActiveGameType = 'sorry' | 'guess_who' | 'mouse_trap';
+export type ActiveGameType = 'sorry' | 'guess_who' | 'mouse_trap' | 'view_master';
 
 export type CameraAngleId =
   | 'fpv'
@@ -48,7 +58,8 @@ export type CameraAngleId =
   | 'side_north'
   | 'side_east'
   | 'side_west'
-  | 'mouse_pov';
+  | 'mouse_pov'
+  | 'toy_chest';
 
 export type RoomSubPhase = 'fpv_room' | 'unfolding' | 'board_play';
 
@@ -73,6 +84,8 @@ interface SorryRoomCanvasProps {
   gameState: SorryGameState;
   guessWhoState: GuessWhoGameState;
   mouseTrapState: MouseTrapGameState;
+  viewMasterState: ViewMasterGameState;
+  toyChestOpen: boolean;
   cameraAngle: CameraAngleId;
   followAction: boolean;
   nearTable: boolean;
@@ -86,10 +99,18 @@ interface SorryRoomCanvasProps {
   onRollMouseTrapDice: () => void;
   onCollectFloatingCheese: () => void;
   onTriggerMouseTrapScene: (sceneId: InteractiveSceneId) => void;
+  onToggleToyChest: () => void;
+  onSelectGameFromToyChest: (game: ActiveGameType) => void;
+  onAdvanceViewMasterSlide: () => void;
+  onSelectViewMasterReel: (reelId: ViewMasterReelId) => void;
+  onToggleViewMasterEyepiece: () => void;
   activeAnimation: ActiveMoveAnimation | null;
   activeMouseStepAnim: ActiveMouseStepAnimation | null;
   chainReactionStartMs: number | null;
   scenePulseStartMs: number | null;
+  viewMasterLeverAnimMs: number | null;
+  viewMasterInsertAnimMs: number | null;
+  physicsBumpTrigger: number;
   unfoldTriggerCount: number;
   walkToTableTrigger: number;
 }
@@ -193,6 +214,8 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
   gameState,
   guessWhoState,
   mouseTrapState,
+  viewMasterState,
+  toyChestOpen,
   cameraAngle,
   followAction,
   nearTable,
@@ -206,10 +229,18 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
   onRollMouseTrapDice,
   onCollectFloatingCheese,
   onTriggerMouseTrapScene,
+  onToggleToyChest,
+  onSelectGameFromToyChest,
+  onAdvanceViewMasterSlide,
+  onSelectViewMasterReel,
+  onToggleViewMasterEyepiece,
   activeAnimation,
   activeMouseStepAnim,
   chainReactionStartMs,
   scenePulseStartMs,
+  viewMasterLeverAnimMs,
+  viewMasterInsertAnimMs,
+  physicsBumpTrigger,
   unfoldTriggerCount,
   walkToTableTrigger,
 }) => {
@@ -222,6 +253,8 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
     gameState,
     guessWhoState,
     mouseTrapState,
+    viewMasterState,
+    toyChestOpen,
     cameraAngle,
     followAction,
     nearTable,
@@ -235,10 +268,18 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
     onRollMouseTrapDice,
     onCollectFloatingCheese,
     onTriggerMouseTrapScene,
+    onToggleToyChest,
+    onSelectGameFromToyChest,
+    onAdvanceViewMasterSlide,
+    onSelectViewMasterReel,
+    onToggleViewMasterEyepiece,
     activeAnimation,
     activeMouseStepAnim,
     chainReactionStartMs,
     scenePulseStartMs,
+    viewMasterLeverAnimMs,
+    viewMasterInsertAnimMs,
+    physicsBumpTrigger,
   });
 
   useEffect(() => {
@@ -249,6 +290,8 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       gameState,
       guessWhoState,
       mouseTrapState,
+      viewMasterState,
+      toyChestOpen,
       cameraAngle,
       followAction,
       nearTable,
@@ -262,10 +305,18 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       onRollMouseTrapDice,
       onCollectFloatingCheese,
       onTriggerMouseTrapScene,
+      onToggleToyChest,
+      onSelectGameFromToyChest,
+      onAdvanceViewMasterSlide,
+      onSelectViewMasterReel,
+      onToggleViewMasterEyepiece,
       activeAnimation,
       activeMouseStepAnim,
       chainReactionStartMs,
       scenePulseStartMs,
+      viewMasterLeverAnimMs,
+      viewMasterInsertAnimMs,
+      physicsBumpTrigger,
     };
   });
 
@@ -319,12 +370,12 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x020204);
-    scene.fog = new THREE.FogExp2(0x020204, 0.13);
+    scene.fog = new THREE.FogExp2(0x020204, 0.11);
 
-    const pmremGenerator = new THREE.PMREMGenerator(renderer);
-    scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environmentIntensity = 0.28;
-    pmremGenerator.dispose();
+    // 1990s Product Studio HDR Equirectangular Environment + Physically-Based Area Lights
+    RectAreaLightUniformsLib.init();
+    scene.environment = create1990sStudioHDREnvironment(renderer);
+    scene.environmentIntensity = 0.58;
 
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.08, 35);
     camera.position.set(0, 1.85, 2.25);
@@ -478,14 +529,26 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
     const hemiFill = new THREE.HemisphereLight(0x334155, 0x1c140d, 0.28);
     scene.add(hemiFill);
 
-    // Subtle studio rim & front fill lights so molded 3D toy plastics have crisp silhouette separation
-    const studioRimLight = new THREE.DirectionalLight(0xbae6fd, 0.48);
-    studioRimLight.position.set(-1.4, TABLE_SURFACE_Y + 1.25, -1.2);
-    scene.add(studioRimLight);
+    // Physically-Based 1990s Commercial Product Studio RectAreaLight Softboxes
+    const studioKeySoftbox = new THREE.RectAreaLight(0xfff1d6, 3.2, 1.35, 1.35);
+    studioKeySoftbox.position.set(0.35, TABLE_SURFACE_Y + 1.45, 0.65);
+    studioKeySoftbox.lookAt(0, TABLE_SURFACE_Y, 0);
+    scene.add(studioKeySoftbox);
 
-    const studioFrontFill = new THREE.DirectionalLight(0xfffbeb, 0.38);
-    studioFrontFill.position.set(1.1, TABLE_SURFACE_Y + 0.95, 1.4);
-    scene.add(studioFrontFill);
+    const studioCoolRimSoftbox = new THREE.RectAreaLight(0x93c5fd, 2.1, 1.4, 0.85);
+    studioCoolRimSoftbox.position.set(-1.35, TABLE_SURFACE_Y + 1.1, -1.15);
+    studioCoolRimSoftbox.lookAt(0, TABLE_SURFACE_Y, 0);
+    scene.add(studioCoolRimSoftbox);
+
+    const studioWarmFillSoftbox = new THREE.RectAreaLight(0xfde68a, 1.85, 1.1, 0.9);
+    studioWarmFillSoftbox.position.set(1.45, TABLE_SURFACE_Y + 1.05, 0.85);
+    studioWarmFillSoftbox.lookAt(0.5, TABLE_SURFACE_Y - 0.1, 0.1);
+    scene.add(studioWarmFillSoftbox);
+
+    // Dedicated warm accent light illuminating the Step2 Toy Chest next to the table
+    const toyChestSpot = new THREE.PointLight(0xfff7ed, 2.4, 4.2, 1.4);
+    toyChestSpot.position.set(1.48, 1.55, 0.55);
+    scene.add(toyChestSpot);
 
     // =========================================================================
     // 2. COMPOSITE 3D WOODEN TABLE & CHAIRS
@@ -623,6 +686,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
     const guessWhoBoxLidTexture = createGuessWhoBoxLidTexture(maxAniso);
     const mouseTrapBoardTexture = createMouseTrapBoardTexture(maxAniso);
     const mouseTrapBoxLidTexture = createMouseTrapBoxLidTexture(maxAniso);
+    const viewMasterBoxLidTexture = createViewMasterBoxLidTexture(maxAniso);
     const cardBackTexture = createCardBackTexture(maxAniso);
 
     const cardFrontTextures: Record<CardRank, THREE.CanvasTexture> = {
@@ -1050,6 +1114,31 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
     };
 
     // =========================================================================
+    // 5C. 3D STEP2 LIFT & HIDE TOY CHEST BESIDE THE TABLE (STORES GAME BOXES!)
+    // =========================================================================
+    const toyChestHandles = buildStep2ToyChest3D(
+      {
+        sorry: sorryBoxLidTexture,
+        guess_who: guessWhoBoxLidTexture,
+        mouse_trap: mouseTrapBoxLidTexture,
+        view_master: viewMasterBoxLidTexture,
+      },
+      isSoftwareGl
+    );
+    // Positioned right beside the table on the East/South-East side so it's visible and easy to inspect!
+    toyChestHandles.rootGroup.position.set(1.48, 0.015, 0.32);
+    toyChestHandles.rootGroup.rotation.y = -0.62;
+    scene.add(toyChestHandles.rootGroup);
+
+    // =========================================================================
+    // 5D. 3D VIEW-MASTER STEREOSCOPIC VIEWER & INTERACTIVE REELS ON TABLETOP
+    // =========================================================================
+    const viewMasterHandles = buildViewMaster3DScene(isSoftwareGl);
+    viewMasterHandles.rootGroup.position.set(0, TABLE_SURFACE_Y, 0);
+    viewMasterHandles.rootGroup.visible = false;
+    scene.add(viewMasterHandles.rootGroup);
+
+    // =========================================================================
     // 6. POOLED PARTICLE SYSTEM
     // =========================================================================
     const PARTICLE_COUNT = 36;
@@ -1099,7 +1188,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
     ];
 
     // =========================================================================
-    // 7. FPV & POINTER INTERACTION
+    // 7. UNIVERSAL PC CAMERA ORBIT/ZOOM, FPV ROAM & POINTER INTERACTION
     // =========================================================================
     const fpvState = {
       pos: new THREE.Vector3(0, 1.66, 3.35),
@@ -1112,10 +1201,21 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       dragStartY: 0,
     };
 
+    const orbitControl = {
+      yawOffset: 0,
+      pitchOffset: 0,
+      zoomScale: 1.0,
+      lastCameraAngle: 'tabletop' as CameraAngleId,
+      lastInteractionMs: performance.now(),
+    };
+
+    let lastPhysicsBumpCount = 0;
+
     const keysHeld = new Set<string>();
 
     const onKeyDown = (e: KeyboardEvent) => {
       keysHeld.add(e.code);
+      orbitControl.lastInteractionMs = performance.now();
       if (e.code === 'KeyE') {
         const cur = latestRef.current;
         if (cur.appState === 'playing' && cur.subPhase === 'fpv_room') {
@@ -1146,6 +1246,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       fpvState.isDraggingLook = true;
       fpvState.dragStartX = e.clientX;
       fpvState.dragStartY = e.clientY;
+      orbitControl.lastInteractionMs = performance.now();
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -1157,6 +1258,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       const dy = e.clientY - fpvState.dragStartY;
       fpvState.dragStartX = e.clientX;
       fpvState.dragStartY = e.clientY;
+      orbitControl.lastInteractionMs = performance.now();
 
       if (cur.subPhase === 'fpv_room' || cur.cameraAngle === 'fpv') {
         fpvState.yaw -= dx * 0.0045;
@@ -1165,7 +1267,26 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           -1.05,
           0.65
         );
+      } else {
+        // Universal PC Click-and-Drag Camera Orbit across all 4 games!
+        orbitControl.yawOffset -= dx * 0.0055;
+        orbitControl.pitchOffset = THREE.MathUtils.clamp(
+          orbitControl.pitchOffset + dy * 0.004,
+          -0.38,
+          0.52
+        );
       }
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      const cur = latestRef.current;
+      if (cur.appState !== 'playing') return;
+      orbitControl.lastInteractionMs = performance.now();
+      orbitControl.zoomScale = THREE.MathUtils.clamp(
+        orbitControl.zoomScale + e.deltaY * 0.0007,
+        0.55,
+        1.75
+      );
     };
 
     const onPointerUp = (e: PointerEvent) => {
@@ -1184,10 +1305,43 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       pointerNDC.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointerNDC, camera);
 
+      // 1. Check if clicking the 3D Step2 Lift & Hide Toy Chest beside the table (or stored 3D game boxes inside it!)
+      const chestHits = raycaster.intersectObjects(toyChestHandles.hitboxes, false);
+      if (chestHits.length > 0) {
+        const hitData = chestHits[0].object.userData;
+        if (hitData.type === 'toy_chest_box' && cur.toyChestOpen && hitData.gameId) {
+          cur.onSelectGameFromToyChest(hitData.gameId as ActiveGameType);
+          return;
+        }
+        cur.onToggleToyChest();
+        return;
+      }
+
       if (cur.subPhase === 'fpv_room') {
         const hits = raycaster.intersectObjects([boxLidMesh, trayBottom], false);
         if (hits.length > 0) {
           cur.onRequestOpenBox();
+        }
+        return;
+      }
+
+      // 2. View-Master 3D Stereoscopic Viewer & Reels interaction
+      if (cur.subPhase === 'board_play' && cur.activeGame === 'view_master') {
+        const vmHits = raycaster.intersectObjects(viewMasterHandles.hitboxes, false);
+        if (vmHits.length > 0) {
+          const uData = vmHits[0].object.userData;
+          if (uData.type === 'view_master_reel' && uData.reelId) {
+            cur.onSelectViewMasterReel(uData.reelId as ViewMasterReelId);
+            return;
+          }
+          if (uData.type === 'view_master_eyepiece') {
+            cur.onToggleViewMasterEyepiece();
+            return;
+          }
+          if (uData.type === 'view_master_lever' || uData.type === 'view_master_body') {
+            cur.onAdvanceViewMasterSlide();
+            return;
+          }
         }
         return;
       }
@@ -1262,6 +1416,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
 
     const domElem = renderer.domElement;
     domElem.addEventListener('pointerdown', onPointerDown);
+    domElem.addEventListener('wheel', onWheel, { passive: true });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
 
@@ -1302,32 +1457,72 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       frameId = window.setTimeout(poll, 5);
     }
 
+    function applyUserOrbitAndZoom(
+      basePos: THREE.Vector3,
+      lookTarget: THREE.Vector3
+    ) {
+      if (
+        Math.abs(orbitControl.yawOffset) < 0.0001 &&
+        Math.abs(orbitControl.pitchOffset) < 0.0001 &&
+        Math.abs(orbitControl.zoomScale - 1.0) < 0.0001
+      ) {
+        return;
+      }
+      const relX = basePos.x - lookTarget.x;
+      const relY = basePos.y - lookTarget.y;
+      const relZ = basePos.z - lookTarget.z;
+
+      const horizDist = Math.hypot(relX, relZ) * orbitControl.zoomScale;
+      const baseTheta = Math.atan2(relX, relZ) + orbitControl.yawOffset;
+      const newY = Math.max(
+        0.28,
+        relY * orbitControl.zoomScale + orbitControl.pitchOffset * 0.85
+      );
+
+      basePos.set(
+        lookTarget.x + Math.sin(baseTheta) * horizDist,
+        lookTarget.y + newY,
+        lookTarget.z + Math.cos(baseTheta) * horizDist
+      );
+    }
+
     function getBaseCameraPose(
       angle: CameraAngleId,
       elapsed: number,
       gameType: ActiveGameType
     ): { pos: THREE.Vector3; look: THREE.Vector3 } {
+      let res: { pos: THREE.Vector3; look: THREE.Vector3 };
       switch (angle) {
         case 'top':
-          return {
+          res = {
             pos: _vec3A.set(0, TABLE_SURFACE_Y + 1.35, 0.04),
             look: _vec3B.set(0, TABLE_SURFACE_Y, 0),
           };
+          break;
         case 'side_north':
-          return {
+          res = {
             pos: _vec3A.set(0, TABLE_SURFACE_Y + 0.64, -1.04),
             look: _vec3B.set(0, TABLE_SURFACE_Y + 0.02, 0.04),
           };
+          break;
         case 'side_east':
-          return {
+          res = {
             pos: _vec3A.set(1.04, TABLE_SURFACE_Y + 0.64, 0),
             look: _vec3B.set(-0.04, TABLE_SURFACE_Y + 0.02, 0),
           };
+          break;
         case 'side_west':
-          return {
+          res = {
             pos: _vec3A.set(-1.04, TABLE_SURFACE_Y + 0.64, 0),
             look: _vec3B.set(0.04, TABLE_SURFACE_Y + 0.02, 0),
           };
+          break;
+        case 'toy_chest':
+          res = {
+            pos: _vec3A.set(0.55, 1.15, 1.48),
+            look: _vec3B.set(1.42, 0.46, 0.28),
+          };
+          break;
         case 'fpv': {
           const bobY = Math.sin(fpvState.walkBobDist * 9.0) * 0.022;
           const pos = _vec3A.set(
@@ -1350,23 +1545,62 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
         default: {
           const sway = Math.sin(elapsed * 0.45) * 0.015;
           if (gameType === 'guess_who') {
-            // Frame the Red Guess Who tray and upright stands clearly in front of the player
-            return {
+            res = {
               pos: _vec3A.set(sway - 0.06, TABLE_SURFACE_Y + 0.52, 0.88),
               look: _vec3B.set(-0.04, TABLE_SURFACE_Y + 0.06, 0.08),
             };
-          }
-          if (gameType === 'mouse_trap') {
-            // Elevated three-quarter studio tabletop framing that showcases the entire square board & connected contraption
-            return {
+          } else if (gameType === 'mouse_trap') {
+            res = {
               pos: _vec3A.set(sway * 0.6 - 0.04, TABLE_SURFACE_Y + 0.66, 0.92),
               look: _vec3B.set(-0.01, TABLE_SURFACE_Y + 0.09, -0.02),
             };
+          } else if (gameType === 'view_master') {
+            res = {
+              pos: _vec3A.set(sway * 0.5, TABLE_SURFACE_Y + 0.56, 0.86),
+              look: _vec3B.set(0, TABLE_SURFACE_Y + 0.12, 0.02),
+            };
+          } else {
+            res = {
+              pos: _vec3A.set(sway, TABLE_SURFACE_Y + 0.68, 1.02),
+              look: _vec3B.set(0, TABLE_SURFACE_Y + 0.01, -0.03),
+            };
           }
-          return {
-            pos: _vec3A.set(sway, TABLE_SURFACE_Y + 0.68, 1.02),
-            look: _vec3B.set(0, TABLE_SURFACE_Y + 0.01, -0.03),
-          };
+          break;
+        }
+      }
+
+      applyUserOrbitAndZoom(res.pos, res.look);
+      return res;
+    }
+
+    function updateFpvStandingRoam(dt: number) {
+      let moveZ = 0;
+      let moveX = 0;
+      if (keysHeld.has('KeyW') || keysHeld.has('ArrowUp')) moveZ += 1;
+      if (keysHeld.has('KeyS') || keysHeld.has('ArrowDown')) moveZ -= 1;
+      if (keysHeld.has('KeyA') || keysHeld.has('ArrowLeft')) moveX -= 1;
+      if (keysHeld.has('KeyD') || keysHeld.has('ArrowRight')) moveX += 1;
+      if (keysHeld.has('KeyQ')) fpvState.yaw += 1.5 * dt;
+
+      if (moveZ !== 0 || moveX !== 0) {
+        const speed = 2.15;
+        const forwardX = -Math.sin(fpvState.yaw);
+        const forwardZ = -Math.cos(fpvState.yaw);
+        const rightX = Math.cos(fpvState.yaw);
+        const rightZ = -Math.sin(fpvState.yaw);
+        const vx = (forwardX * moveZ + rightX * moveX) * speed * dt;
+        const vz = (forwardZ * moveZ + rightZ * moveX) * speed * dt;
+        const nextX = THREE.MathUtils.clamp(fpvState.pos.x + vx, -3.8, 3.8);
+        const nextZ = THREE.MathUtils.clamp(fpvState.pos.z + vz, -3.8, 3.8);
+        if (Math.hypot(nextX, nextZ) > 1.18) {
+          fpvState.pos.x = nextX;
+          fpvState.pos.z = nextZ;
+          const stepDelta = Math.hypot(vx, vz);
+          fpvState.walkBobDist += stepDelta;
+          if (fpvState.walkBobDist - fpvState.lastFootstepDist > 0.55) {
+            fpvState.lastFootstepDist = fpvState.walkBobDist;
+            soundFX.playFootstep();
+          }
         }
       }
     }
@@ -1378,12 +1612,37 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       const nowMs = performance.now();
       const cur = latestRef.current;
 
-      // Sync box cover artwork with activeGame ('sorry' vs 'guess_who' vs 'mouse_trap')
+      // Reset orbit offsets when switching camera presets
+      if (cur.cameraAngle !== orbitControl.lastCameraAngle) {
+        orbitControl.lastCameraAngle = cur.cameraAngle;
+        orbitControl.yawOffset = 0;
+        orbitControl.pitchOffset = 0;
+        orbitControl.zoomScale = 1.0;
+        if (cur.cameraAngle === 'fpv' && cur.subPhase === 'board_play') {
+          // Stand up from the chair so player can pan around the room & inspect the Toy Chest while the game keeps playing!
+          fpvState.pos.set(0.32, 1.66, 1.72);
+          fpvState.yaw = -0.25;
+          fpvState.pitch = -0.32;
+        }
+      }
+
+      // Trigger Cannon.js physics impulse when requested
+      if (cur.physicsBumpTrigger !== lastPhysicsBumpCount) {
+        lastPhysicsBumpCount = cur.physicsBumpTrigger;
+        mouseTrapHandles.triggerPhysicsBump(1.1);
+      }
+
+      // Always update the 3D Step2 Lift & Hide Toy Chest beside the table
+      toyChestHandles.updateToyChest(dt, cur.toyChestOpen, cur.activeGame);
+
+      // Sync box cover artwork with activeGame ('sorry' | 'guess_who' | 'mouse_trap' | 'view_master')
       const targetBoxTex =
         cur.activeGame === 'guess_who'
           ? guessWhoBoxLidTexture
           : cur.activeGame === 'mouse_trap'
           ? mouseTrapBoxLidTexture
+          : cur.activeGame === 'view_master'
+          ? viewMasterBoxLidTexture
           : sorryBoxLidTexture;
       if (boxLidTopMat.map !== targetBoxTex) {
         boxLidTopMat.map = targetBoxTex;
@@ -1451,6 +1710,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           sorryBoardGroup.scale.set(1, 1, 1);
           guessWhoGroup.visible = false;
           mouseTrapHandles.rootGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           discardCardMesh.visible = true;
 
           for (const pState of cur.gameState.pawns) {
@@ -1488,6 +1748,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
         } else if (cur.activeGame === 'guess_who') {
           sorryBoardGroup.visible = false;
           mouseTrapHandles.rootGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           pawnMeshes.forEach((m) => (m.visible = false));
           guessWhoGroup.visible = true;
           redTrayGroup.position.set(0, 0, 0.31);
@@ -1499,10 +1760,26 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
             pivot.rotation.x = wave < -0.6 ? -Math.PI * 0.46 : -0.16;
             sIdx++;
           });
+        } else if (cur.activeGame === 'view_master') {
+          sorryBoardGroup.visible = false;
+          guessWhoGroup.visible = false;
+          mouseTrapHandles.rootGroup.visible = false;
+          pawnMeshes.forEach((m) => (m.visible = false));
+          viewMasterHandles.rootGroup.visible = true;
+          viewMasterHandles.rootGroup.scale.set(1, 1, 1);
+          viewMasterHandles.updateViewMaster3D(
+            dt,
+            elapsed,
+            cur.viewMasterState,
+            cur.viewMasterLeverAnimMs,
+            cur.viewMasterInsertAnimMs,
+            nowMs
+          );
         } else {
           // Mouse Trap 3D Living Pop-Up Board preview on Title Screen!
           sorryBoardGroup.visible = false;
           guessWhoGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           pawnMeshes.forEach((m) => (m.visible = false));
           mouseTrapHandles.rootGroup.visible = true;
           mouseTrapHandles.rootGroup.scale.set(1, 1, 1);
@@ -1540,16 +1817,9 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
         sorryBoardGroup.visible = false;
         guessWhoGroup.visible = false;
         mouseTrapHandles.rootGroup.visible = false;
+        viewMasterHandles.rootGroup.visible = false;
         highlightRings.forEach((r) => (r.visible = false));
         pawnMeshes.forEach((m) => (m.visible = false));
-
-        let moveZ = 0;
-        let moveX = 0;
-        if (keysHeld.has('KeyW') || keysHeld.has('ArrowUp')) moveZ += 1;
-        if (keysHeld.has('KeyS') || keysHeld.has('ArrowDown')) moveZ -= 1;
-        if (keysHeld.has('KeyA') || keysHeld.has('ArrowLeft')) moveX -= 1;
-        if (keysHeld.has('KeyD') || keysHeld.has('ArrowRight')) moveX += 1;
-        if (keysHeld.has('KeyQ')) fpvState.yaw += 1.6 * dt;
 
         if (autoWalkToTableRef.current) {
           const targetX = 0;
@@ -1566,28 +1836,8 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           } else {
             autoWalkToTableRef.current = false;
           }
-        } else if (moveZ !== 0 || moveX !== 0) {
-          const speed = 2.25;
-          const forwardX = -Math.sin(fpvState.yaw);
-          const forwardZ = -Math.cos(fpvState.yaw);
-          const rightX = Math.cos(fpvState.yaw);
-          const rightZ = -Math.sin(fpvState.yaw);
-
-          const vx = (forwardX * moveZ + rightX * moveX) * speed * dt;
-          const vz = (forwardZ * moveZ + rightZ * moveX) * speed * dt;
-          const nextX = THREE.MathUtils.clamp(fpvState.pos.x + vx, -3.8, 3.8);
-          const nextZ = THREE.MathUtils.clamp(fpvState.pos.z + vz, -3.8, 3.8);
-
-          if (Math.hypot(nextX, nextZ) > 1.24) {
-            fpvState.pos.x = nextX;
-            fpvState.pos.z = nextZ;
-            const stepDelta = Math.hypot(vx, vz);
-            fpvState.walkBobDist += stepDelta;
-            if (fpvState.walkBobDist - fpvState.lastFootstepDist > 0.55) {
-              fpvState.lastFootstepDist = fpvState.walkBobDist;
-              soundFX.playFootstep();
-            }
-          }
+        } else {
+          updateFpvStandingRoam(dt);
         }
 
         const distToTable = Math.hypot(fpvState.pos.x, fpvState.pos.z);
@@ -1635,6 +1885,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           sorryBoardGroup.visible = true;
           guessWhoGroup.visible = false;
           mouseTrapHandles.rootGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
 
           const boardT = THREE.MathUtils.smoothstep(progress, 0.16, 0.68);
           sorryBoardGroup.position.y =
@@ -1672,6 +1923,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
         } else if (cur.activeGame === 'guess_who') {
           sorryBoardGroup.visible = false;
           mouseTrapHandles.rootGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           pawnMeshes.forEach((m) => (m.visible = false));
           guessWhoGroup.visible = true;
 
@@ -1707,10 +1959,32 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
             pivot.rotation.x = THREE.MathUtils.lerp(-Math.PI * 0.48, -0.16, standT);
             bIdx++;
           });
+        } else if (cur.activeGame === 'view_master') {
+          sorryBoardGroup.visible = false;
+          guessWhoGroup.visible = false;
+          mouseTrapHandles.rootGroup.visible = false;
+          pawnMeshes.forEach((m) => (m.visible = false));
+          viewMasterHandles.rootGroup.visible = true;
+
+          const vmT = THREE.MathUtils.smoothstep(progress, 0.16, 0.68);
+          viewMasterHandles.rootGroup.position.y =
+            TABLE_SURFACE_Y + Math.sin(vmT * Math.PI) * 0.09;
+          viewMasterHandles.rootGroup.scale.setScalar(
+            THREE.MathUtils.lerp(0.35, 1.0, vmT)
+          );
+          viewMasterHandles.updateViewMaster3D(
+            dt,
+            elapsed,
+            cur.viewMasterState,
+            cur.viewMasterLeverAnimMs,
+            cur.viewMasterInsertAnimMs,
+            nowMs
+          );
         } else {
           // Unfolding 3D MOUSE TRAP Cardboard Box -> Pop-Up Board unfolds & Contraption + Mice pop up!
           sorryBoardGroup.visible = false;
           guessWhoGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           pawnMeshes.forEach((m) => (m.visible = false));
           mouseTrapHandles.rootGroup.visible = true;
 
@@ -1748,12 +2022,14 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           sorryBoardGroup.position.y = TABLE_SURFACE_Y;
           mouseTrapHandles.rootGroup.position.y = TABLE_SURFACE_Y;
           mouseTrapHandles.rootGroup.scale.set(1, 1, 1);
+          viewMasterHandles.rootGroup.position.y = TABLE_SURFACE_Y;
+          viewMasterHandles.rootGroup.scale.set(1, 1, 1);
           soundFX.playHomeChime();
           cur.onUnfoldComplete();
         }
       }
       // =====================================================================
-      // CASE 4: PLAYING — SUBPHASE 'board_play' (SORRY!, GUESS WHO?, OR MOUSE TRAP!)
+      // CASE 4: PLAYING — SUBPHASE 'board_play' (ALL 4 GAMES CONTINUE LIVE!)
       // =====================================================================
       else {
         boxGroup.visible = cur.activeGame !== 'mouse_trap';
@@ -1763,12 +2039,44 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
         boxLidMesh.rotation.set(0, 0.32, 0);
         boxLidMesh.scale.setScalar(0.52);
 
-        if (cur.activeGame === 'guess_who') {
+        // Allow standing up & roaming the room in ANY game while the game continues playing on the table!
+        if (cur.cameraAngle === 'fpv') {
+          updateFpvStandingRoam(dt);
+        }
+
+        if (cur.activeGame === 'view_master') {
+          // =================================================================
+          // 4D. 3D VIEW-MASTER STEREOSCOPIC VIEWER & INTERACTIVE REELS
+          // =================================================================
+          sorryBoardGroup.visible = false;
+          guessWhoGroup.visible = false;
+          mouseTrapHandles.rootGroup.visible = false;
+          pawnMeshes.forEach((m) => (m.visible = false));
+          highlightRings.forEach((r) => (r.visible = false));
+          viewMasterHandles.rootGroup.visible = true;
+
+          viewMasterHandles.updateViewMaster3D(
+            dt,
+            elapsed,
+            cur.viewMasterState,
+            cur.viewMasterLeverAnimMs,
+            cur.viewMasterInsertAnimMs,
+            nowMs
+          );
+
+          const basePose = getBaseCameraPose(cur.cameraAngle, elapsed, 'view_master');
+          _vec3TargetPos.copy(basePose.pos);
+          _vec3TargetLook.copy(basePose.look);
+
+          camera.position.lerp(_vec3TargetPos, 1 - Math.exp(-5.2 * dt));
+          camera.lookAt(_vec3TargetLook);
+        } else if (cur.activeGame === 'guess_who') {
           // =================================================================
           // 4A. 3D GUESS WHO? GAMEPLAY & FOLDING PICTURE STANDS
           // =================================================================
           sorryBoardGroup.visible = false;
           mouseTrapHandles.rootGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           pawnMeshes.forEach((m) => (m.visible = false));
           highlightRings.forEach((r) => (r.visible = false));
           guessWhoGroup.visible = true;
@@ -1840,11 +2148,16 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           _vec3TargetLook.copy(basePose.look);
 
           // Cinematic Camera Path Gently Panning Around the Tabletop During AI Turns!
-          if (cur.followAction) {
+          if (
+            cur.followAction &&
+            cur.cameraAngle !== 'fpv' &&
+            cur.cameraAngle !== 'toy_chest'
+          ) {
             if (cur.guessWhoState.turn === 'ai') {
               const panArc = Math.sin(elapsed * 1.4) * 0.34;
               _vec3TargetPos.set(panArc + 0.22, TABLE_SURFACE_Y + 0.48, 0.32);
               _vec3TargetLook.set(0, TABLE_SURFACE_Y + 0.05, -0.28);
+              applyUserOrbitAndZoom(_vec3TargetPos, _vec3TargetLook);
             } else if (nowMs < guessWhoZoomUntil) {
               if (guessWhoZoomTargetZ > 0) {
                 _vec3TargetPos.set(-0.04, TABLE_SURFACE_Y + 0.36, 0.68);
@@ -1853,6 +2166,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
                 _vec3TargetPos.set(0.08, TABLE_SURFACE_Y + 0.44, 0.22);
                 _vec3TargetLook.set(0, TABLE_SURFACE_Y + 0.04, -0.31);
               }
+              applyUserOrbitAndZoom(_vec3TargetPos, _vec3TargetLook);
             }
           }
 
@@ -1864,6 +2178,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           // =================================================================
           sorryBoardGroup.visible = false;
           guessWhoGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           pawnMeshes.forEach((m) => (m.visible = false));
           highlightRings.forEach((r) => (r.visible = false));
           mouseTrapHandles.rootGroup.visible = true;
@@ -1871,8 +2186,6 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           const isMousePov = cur.cameraAngle === 'mouse_pov';
           let playerIsMoving = false;
 
-          // If Player is in Mouse-Eye Control Mode ('mouse_pov') and Red Mouse is not trapped inside the Red Cage,
-          // allow WASD / Arrow Keys to directly scamper the living Red Mouse across the board after floating cheese!
           if (isMousePov) {
             const redTrapped = cur.mouseTrapState.mice.red.isTrapped;
             let moveForward = 0;
@@ -1888,7 +2201,6 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
 
             if (moveForward !== 0) {
               if (redTrapped) {
-                // Trapped inside the dropped Red Cage — shake cage & squeak!
                 cameraTrauma = 0.18;
               } else {
                 playerIsMoving = true;
@@ -1903,7 +2215,6 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
                 mouseControlState.localPos.x = THREE.MathUtils.clamp(nx, -half, half);
                 mouseControlState.localPos.z = THREE.MathUtils.clamp(nz, -half, half);
 
-                // Check proximity to any Floating 3D Cheese Wedge to collect it!
                 if (nowMs - mouseControlState.lastCheeseCollectMs > 650) {
                   for (const fc of mouseTrapHandles.floatingCheeses) {
                     const dist = Math.hypot(
@@ -1930,7 +2241,6 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
               }
             }
           } else {
-            // Sync mouseControlState with Red Mouse's current track space & face inward toward the living contraption!
             const redSp =
               MOUSE_TRAP_SPACES[cur.mouseTrapState.mice.red.trackIndex] ??
               MOUSE_TRAP_SPACES[0];
@@ -1959,10 +2269,8 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
             playerIsMoving,
           });
 
-          // Camera Choreography for Mouse Trap:
-          // 1. Mouse-Eye Control Mode ('mouse_pov') zooms right down onto the popped-up 3D trail behind the Red Mouse!
           if (isMousePov) {
-            const yaw = mouseControlState.yaw;
+            const yaw = mouseControlState.yaw + orbitControl.yawOffset;
             const mPos = sceneOut.redMouseWorldPos;
             _vec3TargetPos.set(
               mPos.x - Math.sin(yaw) * 0.16,
@@ -1981,8 +2289,11 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
             _vec3TargetPos.copy(basePose.pos);
             _vec3TargetLook.copy(basePose.look);
 
-            // Cinematic Camera Path Gently Panning Around the Tabletop During AI Turns & Chain Reactions!
-            if (cur.followAction) {
+            if (
+              cur.followAction &&
+              cur.cameraAngle !== 'fpv' &&
+              cur.cameraAngle !== 'toy_chest'
+            ) {
               if (sceneOut.activeActionWorldPos) {
                 const focus = sceneOut.activeActionWorldPos;
                 const panTheta = elapsed * 0.75;
@@ -1992,8 +2303,8 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
                   focus.z + Math.cos(panTheta) * 0.48
                 );
                 _vec3TargetLook.set(focus.x, focus.y + 0.04, focus.z);
+                applyUserOrbitAndZoom(_vec3TargetPos, _vec3TargetLook);
               } else if (cur.mouseTrapState.currentTurn !== 'red') {
-                // Smoothly orbit/pan around the tabletop during AI mouse turns!
                 const aiColor = cur.mouseTrapState.currentTurn;
                 const aiRig = mouseTrapHandles.mouseRigs.get(aiColor);
                 if (aiRig) {
@@ -2006,6 +2317,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
                     Math.cos(orbitTheta) * 0.78
                   );
                   _vec3TargetLook.set(aiPos.x * 0.5, TABLE_SURFACE_Y + 0.05, aiPos.z * 0.5);
+                  applyUserOrbitAndZoom(_vec3TargetPos, _vec3TargetLook);
                 }
               }
             }
@@ -2019,6 +2331,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
           // =================================================================
           guessWhoGroup.visible = false;
           mouseTrapHandles.rootGroup.visible = false;
+          viewMasterHandles.rootGroup.visible = false;
           sorryBoardGroup.visible = true;
           sorryBoardGroup.scale.set(1, 1, 1);
           sorryBoardGroup.rotation.y = 0;
@@ -2302,45 +2615,15 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
             playedBumpSoundForMove = false;
           }
 
-          if (cur.cameraAngle === 'fpv') {
-            let moveZ = 0;
-            let moveX = 0;
-            if (keysHeld.has('KeyW') || keysHeld.has('ArrowUp')) moveZ += 1;
-            if (keysHeld.has('KeyS') || keysHeld.has('ArrowDown')) moveZ -= 1;
-            if (keysHeld.has('KeyA') || keysHeld.has('ArrowLeft')) moveX -= 1;
-            if (keysHeld.has('KeyD') || keysHeld.has('ArrowRight')) moveX += 1;
-
-            if (moveZ !== 0 || moveX !== 0) {
-              const speed = 2.1;
-              const forwardX = -Math.sin(fpvState.yaw);
-              const forwardZ = -Math.cos(fpvState.yaw);
-              const rightX = Math.cos(fpvState.yaw);
-              const rightZ = -Math.sin(fpvState.yaw);
-              const nextX = THREE.MathUtils.clamp(
-                fpvState.pos.x + (forwardX * moveZ + rightX * moveX) * speed * dt,
-                -3.8,
-                3.8
-              );
-              const nextZ = THREE.MathUtils.clamp(
-                fpvState.pos.z + (forwardZ * moveZ + rightZ * moveX) * speed * dt,
-                -3.8,
-                3.8
-              );
-              if (Math.hypot(nextX, nextZ) > 1.24) {
-                fpvState.pos.x = nextX;
-                fpvState.pos.z = nextZ;
-              }
-            }
-          }
-
           const basePose = getBaseCameraPose(cur.cameraAngle, elapsed, 'sorry');
           _vec3TargetPos.copy(basePose.pos);
           _vec3TargetLook.copy(basePose.look);
 
-          // Cinematic Camera Path:
-          // - Gently pans around the tabletop during AI turns (Blue, Yellow, Green)
-          // - Tracks the moving piece along a sweeping arc!
-          if (cur.followAction) {
+          if (
+            cur.followAction &&
+            cur.cameraAngle !== 'fpv' &&
+            cur.cameraAngle !== 'toy_chest'
+          ) {
             const isAiTurn = cur.gameState.currentTurn !== 'red';
             const aiQuadrantAngle =
               cur.gameState.currentTurn === 'blue'
@@ -2363,8 +2646,8 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
                 cinematicFocusWorld.z * 0.65 + camOffsetZ
               );
               _vec3TargetLook.copy(cinematicFocusWorld);
+              applyUserOrbitAndZoom(_vec3TargetPos, _vec3TargetLook);
             } else if (isAiTurn) {
-              // Smoothly pan around the tabletop while the AI player draws & contemplates its move!
               const orbitTheta = aiQuadrantAngle + gentlePanOffset;
               _vec3TargetPos.set(
                 Math.sin(orbitTheta) * 0.96,
@@ -2372,9 +2655,11 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
                 Math.cos(orbitTheta) * 0.96
               );
               _vec3TargetLook.set(0, TABLE_SURFACE_Y + 0.02, 0);
+              applyUserOrbitAndZoom(_vec3TargetPos, _vec3TargetLook);
             } else if (isCardFlipping) {
               _vec3TargetPos.set(0.08, TABLE_SURFACE_Y + 0.56, 0.58);
               _vec3TargetLook.set(0, TABLE_SURFACE_Y + 0.02, 0);
+              applyUserOrbitAndZoom(_vec3TargetPos, _vec3TargetLook);
             }
           }
 
@@ -2421,6 +2706,7 @@ export const SorryRoomCanvas: React.FC<SorryRoomCanvasProps> = ({
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', clearInputs);
       domElem.removeEventListener('pointerdown', onPointerDown);
+      domElem.removeEventListener('wheel', onWheel);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       renderer.dispose();

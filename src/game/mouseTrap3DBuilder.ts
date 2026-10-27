@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import {
   CHEESE_WHEEL_SPACE_INDEX,
   InteractiveSceneId,
@@ -8,6 +9,7 @@ import {
   MouseColor,
   MouseTrapGameState,
 } from './mouseTrapRules';
+import { soundFX } from './soundEffects';
 
 const BOARD_WORLD_SIZE = 1.16;
 
@@ -78,6 +80,7 @@ export interface MouseTrap3DSceneHandles {
     redMouseWorldPos: THREE.Vector3;
     redMouseLookWorldPos: THREE.Vector3;
   };
+  triggerPhysicsBump: (strength?: number) => void;
 }
 
 // ============================================================================
@@ -1820,11 +1823,172 @@ export function buildMouseTrap3DScene(
   const diceMesh = create3DDiceMesh(isSoftwareGl);
   rootGroup.add(diceMesh);
 
+  // =========================================================================
+  // 7B. CANNON.JS (cannon-es) REALISTIC PHYSICS WORLD FOR PAWNS, DIE & WEDGES
+  // =========================================================================
+  const physicsWorld = new CANNON.World({
+    gravity: new CANNON.Vec3(0, -9.82, 0),
+  });
+  physicsWorld.broadphase = new CANNON.SAPBroadphase(physicsWorld);
+  physicsWorld.allowSleep = true;
+
+  const boardPhysMat = new CANNON.Material('boardSurface');
+  const pawnPhysMat = new CANNON.Material('mousePawn');
+  const dicePhysMat = new CANNON.Material('plasticDie');
+  const cheesePhysMat = new CANNON.Material('cheeseWedge');
+
+  physicsWorld.addContactMaterial(
+    new CANNON.ContactMaterial(boardPhysMat, pawnPhysMat, {
+      friction: 0.35,
+      restitution: 0.42,
+    })
+  );
+  physicsWorld.addContactMaterial(
+    new CANNON.ContactMaterial(pawnPhysMat, pawnPhysMat, {
+      friction: 0.18,
+      restitution: 0.72,
+    })
+  );
+  physicsWorld.addContactMaterial(
+    new CANNON.ContactMaterial(boardPhysMat, dicePhysMat, {
+      friction: 0.32,
+      restitution: 0.58,
+    })
+  );
+  physicsWorld.addContactMaterial(
+    new CANNON.ContactMaterial(boardPhysMat, cheesePhysMat, {
+      friction: 0.38,
+      restitution: 0.35,
+    })
+  );
+
+  // Static Board Floor Plane at y = 0.016
+  const floorBody = new CANNON.Body({
+    mass: 0,
+    material: boardPhysMat,
+    shape: new CANNON.Plane(),
+  });
+  floorBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
+  floorBody.position.set(0, 0.016, 0);
+  physicsWorld.addBody(floorBody);
+
+  // Dynamic Cannon.js Rigid Bodies for the 4 Mouse Pawns (for physical pawn-on-pawn & trap collisions)
+  const mousePhysBodies = new Map<MouseColor, CANNON.Body>();
+  let lastClackSoundTimeMs = 0;
+
+  for (const color of MOUSE_COLORS) {
+    const startSp = MOUSE_TRAP_SPACES[0];
+    const startPos = uvToLocal(startSp.u, startSp.v, 0.036);
+    const body = new CANNON.Body({
+      mass: 0.16,
+      material: pawnPhysMat,
+      shape: new CANNON.Sphere(0.02),
+      linearDamping: 0.55,
+      angularDamping: 0.65,
+    });
+    body.position.set(startPos.x, startPos.y, startPos.z);
+    body.addEventListener('collide', (ev: { contact: { getImpactVelocityAlongNormal: () => number } }) => {
+      const impact = Math.abs(ev.contact.getImpactVelocityAlongNormal());
+      const now = performance.now();
+      if (impact > 0.45 && now - lastClackSoundTimeMs > 90) {
+        lastClackSoundTimeMs = now;
+        soundFX.playPhysicsCollisionClack(Math.min(1, impact / 2.5));
+      }
+    });
+    physicsWorld.addBody(body);
+    mousePhysBodies.set(color, body);
+  }
+
+  // Dynamic Cannon.js Rigid Body for the 3D Numbered Die
+  const dicePhysBody = new CANNON.Body({
+    mass: 0.08,
+    material: dicePhysMat,
+    shape: new CANNON.Box(new CANNON.Vec3(0.018, 0.018, 0.018)),
+    linearDamping: 0.35,
+    angularDamping: 0.35,
+  });
+  dicePhysBody.position.set(0.39, 0.055, 0.43);
+  physicsWorld.addBody(dicePhysBody);
+
+  // 8 Scattered Physical 3D Swiss Cheese Wedges around the board perimeter (driven by Cannon.js!)
+  const physicalCheeseWedges: { mesh: THREE.Mesh; body: CANNON.Body; homeX: number; homeZ: number }[] = [];
+  const perimeterWedgeCoords: [number, number, number][] = [
+    [-0.46, 0.55, 0.4],
+    [-0.36, 0.57, -0.5],
+    [-0.25, 0.56, 1.1],
+    [0.36, 0.56, -0.8],
+    [0.47, 0.55, 0.3],
+    [0.52, 0.57, 1.4],
+    [-0.55, 0.44, -0.2],
+    [0.55, 0.43, 0.9],
+  ];
+  for (const [wx, wz, rotY] of perimeterWedgeCoords) {
+    const pWedgeMesh = new THREE.Mesh(wedgeGeo, cheeseMat);
+    pWedgeMesh.castShadow = !isSoftwareGl;
+    pWedgeMesh.receiveShadow = !isSoftwareGl;
+    pWedgeMesh.position.set(wx, 0.025, wz);
+    pWedgeMesh.rotation.y = rotY;
+    rootGroup.add(pWedgeMesh);
+
+    const wBody = new CANNON.Body({
+      mass: 0.05,
+      material: cheesePhysMat,
+      shape: new CANNON.Box(new CANNON.Vec3(0.016, 0.006, 0.016)),
+      linearDamping: 0.5,
+      angularDamping: 0.55,
+    });
+    wBody.position.set(wx, 0.028, wz);
+    wBody.quaternion.setFromEuler(0, rotY, 0);
+    physicsWorld.addBody(wBody);
+    physicalCheeseWedges.push({ mesh: pWedgeMesh, body: wBody, homeX: wx, homeZ: wz });
+  }
+
+  let prevDiceRollVal: number | null = null;
+  let prevChainReactionTriggerMs: number | null = null;
+
+  const triggerPhysicsBump = (strength = 1.0) => {
+    dicePhysBody.wakeUp();
+    dicePhysBody.velocity.set(
+      (Math.random() - 0.5) * 0.45 * strength,
+      0.85 * strength,
+      (Math.random() - 0.5) * 0.45 * strength
+    );
+    dicePhysBody.angularVelocity.set(
+      (Math.random() - 0.5) * 14 * strength,
+      (Math.random() - 0.5) * 14 * strength,
+      (Math.random() - 0.5) * 14 * strength
+    );
+
+    for (const body of mousePhysBodies.values()) {
+      body.wakeUp();
+      body.velocity.set(
+        (Math.random() - 0.5) * 0.38 * strength,
+        0.55 * strength,
+        (Math.random() - 0.5) * 0.38 * strength
+      );
+    }
+
+    for (const pw of physicalCheeseWedges) {
+      pw.body.wakeUp();
+      pw.body.velocity.set(
+        (Math.random() - 0.5) * 0.32 * strength,
+        0.48 * strength,
+        (Math.random() - 0.5) * 0.32 * strength
+      );
+      pw.body.angularVelocity.set(
+        (Math.random() - 0.5) * 8 * strength,
+        (Math.random() - 0.5) * 10 * strength,
+        (Math.random() - 0.5) * 8 * strength
+      );
+    }
+    soundFX.playPhysicsCollisionClack(Math.min(1, 0.65 * strength));
+  };
+
   const _tmpWorld = new THREE.Vector3();
   const _tmpLook = new THREE.Vector3();
 
   // =========================================================================
-  // 8. REAL-TIME ANIMATION & CONNECTED RUBE GOLDBERG CHAIN REACTION LOOP
+  // 8. REAL-TIME ANIMATION, CANNON.JS PHYSICS & RUBE GOLDBERG CHAIN REACTION
   // =========================================================================
   const updateLivingMouseTrapScene: MouseTrap3DSceneHandles['updateLivingMouseTrapScene'] = ({
     elapsed,
@@ -1891,15 +2055,85 @@ export function buildMouseTrap3DScene(
       fc.group.rotation.y = elapsed * 1.85 + fc.phaseOffset;
     }
 
-    // 4. Gently Bob the 3D Numbered Die when awaiting roll
-    if (state.turnPhase === 'roll' && state.currentTurn === 'red') {
-      diceMesh.position.y =
-        0.036 + trailElevation + Math.abs(Math.sin(elapsed * 4.2)) * 0.018;
+    // 3B. Step the Cannon.js Physics World & Sync Physical Die + Scattered Cheese Wedges
+    if (state.lastDiceRoll !== prevDiceRollVal) {
+      prevDiceRollVal = state.lastDiceRoll;
+      if (state.lastDiceRoll !== null) {
+        dicePhysBody.wakeUp();
+        dicePhysBody.position.set(0.39, 0.14, 0.43);
+        dicePhysBody.velocity.set(
+          (Math.random() - 0.5) * 0.35,
+          1.15,
+          (Math.random() - 0.5) * 0.35
+        );
+        dicePhysBody.angularVelocity.set(
+          (Math.random() - 0.5) * 18,
+          (Math.random() - 0.5) * 18,
+          (Math.random() - 0.5) * 18
+        );
+      }
+    }
+
+    if (
+      chainReactionStartMs !== null &&
+      chainReactionStartMs !== prevChainReactionTriggerMs
+    ) {
+      prevChainReactionTriggerMs = chainReactionStartMs;
+      triggerPhysicsBump(0.85);
+    }
+
+    physicsWorld.step(1 / 60, Math.min(dt, 0.05), 3);
+
+    // Sync scattered perimeter Swiss Cheese Wedges from Cannon.js bodies
+    for (const pw of physicalCheeseWedges) {
+      // Soft tether spring so wedges stay near the board rim
+      const dx = pw.homeX - pw.body.position.x;
+      const dz = pw.homeZ - pw.body.position.z;
+      pw.body.velocity.x += dx * 2.5 * dt;
+      pw.body.velocity.z += dz * 2.5 * dt;
+      if (pw.body.position.y < 0.022) {
+        pw.body.position.y = 0.022;
+      }
+      pw.mesh.position.set(
+        pw.body.position.x,
+        pw.body.position.y,
+        pw.body.position.z
+      );
+      pw.mesh.quaternion.set(
+        pw.body.quaternion.x,
+        pw.body.quaternion.y,
+        pw.body.quaternion.z,
+        pw.body.quaternion.w
+      );
+    }
+
+    // 4. Sync 3D Numbered Die with Cannon.js Physical Tumbling + Hover Prompt
+    dicePhysBody.velocity.x += (0.39 - dicePhysBody.position.x) * 3.2 * dt;
+    dicePhysBody.velocity.z += (0.43 - dicePhysBody.position.z) * 3.2 * dt;
+    if (
+      state.turnPhase === 'roll' &&
+      state.currentTurn === 'red' &&
+      dicePhysBody.velocity.lengthSquared() < 0.02
+    ) {
+      diceMesh.position.set(
+        0.39,
+        0.036 + trailElevation + Math.abs(Math.sin(elapsed * 4.2)) * 0.018,
+        0.43
+      );
       diceMesh.rotation.y = elapsed * 2.1;
       diceMesh.rotation.x = Math.sin(elapsed * 3.0) * 0.35;
     } else {
-      diceMesh.position.y = 0.032 + trailElevation;
-      diceMesh.rotation.set(0, (state.lastDiceRoll ?? 1) * 1.1, 0);
+      diceMesh.position.set(
+        dicePhysBody.position.x,
+        Math.max(0.034 + trailElevation, dicePhysBody.position.y),
+        dicePhysBody.position.z
+      );
+      diceMesh.quaternion.set(
+        dicePhysBody.quaternion.x,
+        dicePhysBody.quaternion.y,
+        dicePhysBody.quaternion.z,
+        dicePhysBody.quaternion.w
+      );
     }
 
     // 5. Connected 6-Phase Physical Rube Goldberg Chain Reaction!
@@ -2116,6 +2350,15 @@ export function buildMouseTrap3DScene(
         const curZ = THREE.MathUtils.lerp(p0.z, p1.z, frac);
         const hopY = Math.sin(frac * Math.PI) * 0.044;
 
+        const stepPhysBody = mousePhysBodies.get(color)!;
+        stepPhysBody.wakeUp();
+        stepPhysBody.position.set(curX, 0.036 + trailElevation + hopY, curZ);
+        stepPhysBody.velocity.set(
+          (p1.x - p0.x) * 3.2,
+          0,
+          (p1.z - p0.z) * 3.2
+        );
+
         rig.root.position.set(curX, 0.016 + trailElevation + hopY, curZ);
         rig.root.rotation.y = Math.atan2(p1.x - p0.x, p1.z - p0.z);
         rig.bodyGroup.rotation.x = -Math.sin(frac * Math.PI) * 0.24;
@@ -2134,10 +2377,32 @@ export function buildMouseTrap3DScene(
 
         const isSoleOnCheeseWheel =
           mState.trackIndex === CHEESE_WHEEL_SPACE_INDEX;
+        // Couple Mouse Pawn to Cannon.js Rigid Body for realistic physical collisions when mice share/enter spaces!
+        const physBody = mousePhysBodies.get(color)!;
+        const targetX = baseLocal.x + (isSoleOnCheeseWheel ? 0 : ox);
+        const targetZ = baseLocal.z + (isSoleOnCheeseWheel ? 0 : oz);
+        const springK = 18.0;
+        physBody.wakeUp();
+        physBody.velocity.x += (targetX - physBody.position.x) * springK * dt;
+        physBody.velocity.z += (targetZ - physBody.position.z) * springK * dt;
+
+        // Clamp max drift so pawn stays readable near its space while still physically bumping neighbors
+        const offsetX = THREE.MathUtils.clamp(
+          physBody.position.x - targetX,
+          -0.032,
+          0.032
+        );
+        const offsetZ = THREE.MathUtils.clamp(
+          physBody.position.z - targetZ,
+          -0.032,
+          0.032
+        );
+        const physHopY = Math.max(0, physBody.position.y - 0.036);
+
         rig.root.position.set(
-          baseLocal.x + (isSoleOnCheeseWheel ? 0 : ox),
-          baseLocal.y,
-          baseLocal.z + (isSoleOnCheeseWheel ? 0 : oz)
+          targetX + offsetX,
+          baseLocal.y + physHopY,
+          targetZ + offsetZ
         );
         rig.root.rotation.y = Math.atan2(
           nextLocal.x - baseLocal.x,
@@ -2148,7 +2413,12 @@ export function buildMouseTrap3DScene(
         rig.bodyGroup.scale.set(1, breathe, 1);
         rig.bodyGroup.rotation.x = mState.isTrapped
           ? Math.sin(elapsed * 12) * 0.1
-          : 0;
+          : THREE.MathUtils.clamp(-physBody.velocity.z * 0.22, -0.28, 0.28);
+        rig.bodyGroup.rotation.z = THREE.MathUtils.clamp(
+          physBody.velocity.x * 0.22,
+          -0.28,
+          0.28
+        );
       }
     }
 
@@ -2198,5 +2468,6 @@ export function buildMouseTrap3DScene(
     floatingCheeses,
     mouseRigs,
     updateLivingMouseTrapScene,
+    triggerPhysicsBump,
   };
 }
